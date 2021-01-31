@@ -44,7 +44,6 @@ class LitGPT(pl.LightningModule):
         )
 
     def forward(self, x, targets=None):
-        # TODO: Use tokens as input and convert to indices here?
         b, t = x.size()
         assert t <= self.hparams.block_size, \
                "Cannot forward, model block size is exhausted."
