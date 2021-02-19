@@ -10,7 +10,7 @@ class LitGPT(pl.LightningModule):
 
     def __init__(
         self,
-        vocab,
+        vocab_size,
         block_size=128,
         n_embd=768,
         n_layer=12,
@@ -22,26 +22,31 @@ class LitGPT(pl.LightningModule):
         betas=(0.9, 0.95),
         learning_rate=3e-4
     ):
-        """
-        Args:
-            vocab (dict): Mapping from integers to associated tokens.
-        """
         super().__init__()
         # auto creates self.hparams from the method signature
         self.save_hyperparameters()
 
-        self.tok_emb = nn.Embedding(len(self.hparams.vocab), n_embd)
+        self.tok_emb = nn.Embedding(vocab_size, n_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
         self.drop = nn.Dropout(embd_pdrop)
 
         self.blocks = nn.Sequential(*[
-            Block(self.hparams) for _ in range(self.hparams.n_layer)
+            Block(self.hparams) for _ in range(n_layer)
         ])
 
-        self.ln_f = nn.LayerNorm(self.hparams.n_embd)
-        self.head = nn.Linear(
-            self.hparams.n_embd, len(self.hparams.vocab), bias=False
-        )
+        self.ln_f = nn.LayerNorm(n_embd)
+        self.head = nn.Linear(n_embd, vocab_size, bias=False)
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            if isinstance(module, nn.Linear) and module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
 
     def forward(self, x, targets=None):
         b, t = x.size()
@@ -62,18 +67,16 @@ class LitGPT(pl.LightningModule):
 
     def configure_optimizers(self):
         # create the optimizer
-        # all biases, layernorm weights and embeddings weights should not be
-        # decayed
-        no_decay = [r"^.*bias$", r"^ln.*\.weight$", r"^pos_emb$",
-                    r"^tok_emb.weight$"]
-        params_no_decay = [
-            p for n, p in self.named_parameters()
-            if any(re.match(nd, n) for nd in no_decay)
-        ]
-        params_decay = [
-            p for n, p in self.named_parameters()
-            if not any(re.match(nd, n) for nd in no_decay)
-        ]
+        if not hasattr(self, 'param_names_decay'):
+            self._group_parameters()
+
+        params_decay, params_no_decay = [], []
+        for n, p in self.named_parameters():
+            if n in self.param_names_decay:
+                params_decay.append(p)
+            else:
+                params_no_decay.append(p)
+
         optim_groups = [
             {
                 "params": params_decay,
@@ -88,6 +91,20 @@ class LitGPT(pl.LightningModule):
                                       lr=self.hparams.learning_rate,
                                       betas=self.hparams.betas)
         return optimizer
+
+    def _group_parameters(self):
+        # all biases, layernorm weights and embeddings weights should not be
+        # decayed
+        no_decay = [r".*bias$", r"(?:.*\.)?ln.*\.weight$", r"pos_emb$",
+                    r"tok_emb.weight$"]
+        parameter_names = [n for n, _ in self.named_parameters()]
+        # These are set as instance variables for easier debugging.
+        self.param_names_no_decay = [
+            n for n in parameter_names
+            if any(re.match(nd, n) for nd in no_decay)
+        ]
+        self.param_names_decay = [n for n in parameter_names
+                                  if n not in self.param_names_no_decay]
 
     def training_step(self, batch, batch_idx):
         x, y = batch
