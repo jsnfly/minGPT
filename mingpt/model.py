@@ -1,16 +1,18 @@
 import pytorch_lightning as pl
 import torch
+import math
+import inspect
+import re
 import torch.nn as nn
 from torch.nn import functional as F
-import math
-import re
+from pytorch_lightning.utilities.parsing import get_init_args
 
 
 class LitGPT(pl.LightningModule):
 
     def __init__(
         self,
-        vocab_size,
+        vocab,
         block_size=128,
         n_embd=768,
         n_layer=12,
@@ -25,8 +27,9 @@ class LitGPT(pl.LightningModule):
         super().__init__()
         # auto creates self.hparams from the method signature
         self.save_hyperparameters()
+        # TODO: Document separator?
 
-        self.tok_emb = nn.Embedding(vocab_size, n_embd)
+        self.tok_emb = nn.Embedding(len(vocab), n_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
         self.drop = nn.Dropout(embd_pdrop)
 
@@ -35,9 +38,17 @@ class LitGPT(pl.LightningModule):
         ])
 
         self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, vocab_size, bias=False)
+        self.head = nn.Linear(n_embd, len(vocab), bias=False)
 
         self.apply(self._init_weights)
+
+    def save_hyperparameters(self, *args, **kwargs):
+        frame = inspect.currentframe().f_back
+        init_args = get_init_args(frame)
+        # Treating the vocab like a hparam makes it look ugly in Tensorboard.
+        # It's is also not really a (single) parameter.
+        self.vocab = init_args.pop('vocab')
+        super().save_hyperparameters(*init_args.keys(), frame=frame)
 
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
@@ -119,6 +130,10 @@ class LitGPT(pl.LightningModule):
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
         self.log('val_loss', loss)
         return loss
+
+    def on_save_checkpoint(self, checkpoint):
+        # Must be set here, to be loaded properly.
+        checkpoint['hyper_parameters']['vocab'] = self.vocab
 
 
 class Block(nn.Module):
