@@ -1,8 +1,8 @@
 import random
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.nn import functional as F
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -10,25 +10,29 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+
 def top_k_logits(logits, k):
     v, ix = torch.topk(logits, k)
     out = logits.clone()
     out[out < v[:, [-1]]] = -float('Inf')
     return out
 
+
 @torch.no_grad()
 def sample(model, x, steps, temperature=1.0, sample=False, top_k=None):
     """
-    take a conditioning sequence of indices in x (of shape (b,t)) and predict the next token in
-    the sequence, feeding the predictions back into the model each time. Clearly the sampling
-    has quadratic complexity unlike an RNN that is only linear, and has a finite context window
-    of block_size, unlike an RNN that has an infinite context window.
+    take a conditioning sequence of indices in x (of shape (b,t)) and predict
+    the next token in the sequence, feeding the predictions back into the model
+    each time. Clearly the sampling has quadratic complexity unlike an RNN that
+    is only linear, and has a finite context window of block_size, unlike an
+    RNN that has an infinite context window.
     """
-    block_size = model.get_block_size()
+    block_size = model.hparams.block_size
     model.eval()
     for k in range(steps):
-        x_cond = x if x.size(1) <= block_size else x[:, -block_size:] # crop context if needed
-        logits, _ = model(x_cond)
+        # crop context if needed
+        x_cond = x if x.size(1) <= block_size else x[:, -block_size:]
+        logits = model(x_cond)
         # pluck the logits at the final step and scale by temperature
         logits = logits[:, -1, :] / temperature
         # optionally crop probabilities to only the top k options
