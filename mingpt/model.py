@@ -27,7 +27,6 @@ class LitGPT(pl.LightningModule):
         super().__init__()
         # auto creates self.hparams from the method signature
         self.save_hyperparameters()
-        # TODO: Document separator?
 
         self.tok_emb = nn.Embedding(len(vocab), n_embd)
         self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
