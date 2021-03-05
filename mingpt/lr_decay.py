@@ -2,6 +2,9 @@ import math
 import pytorch_lightning as pl
 
 
+# TODO: Does not seem to work properly on TPU. Also is not saved to continue
+# Training from current state. Probably _configre_optimizer should return
+# a real LRScheduler and a Callback shouldn't be used.
 class LearningRateDecayCallback(pl.Callback):
 
     def __init__(self,
