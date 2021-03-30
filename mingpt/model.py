@@ -12,12 +12,9 @@ class LitGPT(pl.LightningModule):
 
     def __init__(
         self,
-        vocab,
-        block_size=128,
         n_embd=768,
         n_layer=12,
         n_head=4,
-        embd_pdrop=0.1,
         resid_pdrop=0.1,
         attn_pdrop=0.1,
         weight_decay=0.1,
@@ -28,26 +25,16 @@ class LitGPT(pl.LightningModule):
         # auto creates self.hparams from the method signature
         self.save_hyperparameters()
 
-        self.tok_emb = nn.Embedding(len(vocab), n_embd)
-        self.pos_emb = nn.Parameter(torch.zeros(1, block_size, n_embd))
-        self.drop = nn.Dropout(embd_pdrop)
+        self.emb = nn.Embedding(5, n_embd // n_head)
 
         self.blocks = nn.Sequential(*[
             Block(self.hparams) for _ in range(n_layer)
         ])
 
         self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, len(vocab), bias=False)
+        self.head = nn.Linear(n_embd, 1, bias=False)
 
         self.apply(self._init_weights)
-
-    def save_hyperparameters(self, *args, **kwargs):
-        frame = inspect.currentframe().f_back
-        init_args = get_init_args(frame)
-        # Treating the vocab like a hparam makes it look ugly in Tensorboard.
-        # It's is also not really a (single) parameter.
-        self.vocab = init_args.pop('vocab')
-        super().save_hyperparameters(*init_args.keys(), frame=frame)
 
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
@@ -59,21 +46,12 @@ class LitGPT(pl.LightningModule):
             module.weight.data.fill_(1.0)
 
     def forward(self, x, targets=None):
-        b, t = x.size()
-        assert t <= self.hparams.block_size, \
-               "Cannot forward, model block size is exhausted."
-
-        # forward the GPT model
-        # each index maps to a (learnable) vector
-        token_embeddings = self.tok_emb(x)
-        # each position maps to a (learnable) vector
-        position_embeddings = self.pos_emb[:, :t, :]
-        x = self.drop(token_embeddings + position_embeddings)
+        x = self.emb(x)
+        x = x.repeat(1, 1, self.hparams.n_head)
         x = self.blocks(x)
         x = self.ln_f(x)
-        logits = self.head(x)
-
-        return logits
+        x = x.mean(axis=1)
+        return self.head(x).sigmoid()
 
     def configure_optimizers(self):
         # create the optimizer
@@ -118,21 +96,15 @@ class LitGPT(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+        loss = F.mse_loss(self(x).squeeze(), y)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), y.view(-1))
+        loss = F.mse_loss(self(x).squeeze(), y)
         self.log('val_loss', loss)
         return loss
-
-    def on_save_checkpoint(self, checkpoint):
-        # Must be set here, to be loaded properly.
-        checkpoint['hyper_parameters']['vocab'] = self.vocab
 
 
 class Block(nn.Module):
@@ -142,7 +114,7 @@ class Block(nn.Module):
         super().__init__()
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.ln2 = nn.LayerNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config)
+        self.attn = SelfAttention(config)
         self.mlp = nn.Sequential(
             nn.Linear(config.n_embd, 4 * config.n_embd),
             nn.GELU(),
@@ -156,13 +128,7 @@ class Block(nn.Module):
         return x
 
 
-class CausalSelfAttention(nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the
-    end. It is possible to use torch.nn.MultiheadAttention here but I am
-    including an explicit implementation here to show that there is nothing too
-    scary here.
-    """
+class SelfAttention(nn.Module):
 
     def __init__(self, config):
         super().__init__()
@@ -176,10 +142,6 @@ class CausalSelfAttention(nn.Module):
         self.resid_drop = nn.Dropout(config.resid_pdrop)
         # output projection
         self.proj = nn.Linear(config.n_embd, config.n_embd)
-        # causal mask to ensure that attention is only applied to the left in
-        # the input sequence
-        mask = torch.tril(torch.ones(config.block_size, config.block_size))
-        self.register_buffer("mask", mask[None, None, ...])
         self.n_head = config.n_head
 
     def forward(self, x, layer_past=None):
@@ -194,7 +156,6 @@ class CausalSelfAttention(nn.Module):
         # causal self-attention; Self-attend:
         # (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         # TODO: Dropout scales values -> Probabilities greater than 1 are
         # possible. Is this a Problem?
