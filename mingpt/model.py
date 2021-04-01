@@ -4,8 +4,18 @@ import math
 import inspect
 import re
 import torch.nn as nn
+import pandas as pd
+import numpy as np
 from torch.nn import functional as F
 from pytorch_lightning.utilities.parsing import get_init_args
+from itertools import chain
+
+class LabelSmoothLoss(nn.Module):
+    
+    def forward(self, input, target):
+        log_prob = F.log_softmax(input, dim=-1)
+        loss = (-target * log_prob).sum(dim=-1).mean()
+        return loss
 
 
 class LitGPT(pl.LightningModule):
@@ -25,17 +35,27 @@ class LitGPT(pl.LightningModule):
         # auto creates self.hparams from the method signature
         self.save_hyperparameters()
 
-        self.emb = nn.Embedding(5, n_embd // n_head)
+        self.emb = nn.Embedding(5, n_embd)
 
         self.blocks = nn.Sequential(*[
             Block(self.hparams) for _ in range(n_layer)
         ])
 
         self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, 1, bias=False)
+        self.head = nn.Linear(n_embd, 5, bias=False)
+
+        smooth_labels = torch.FloatTensor([
+            [0.95, 0.05, 0.0, 0.0, 0.0],
+            [0.05, 0.75, 0.15, 0.05, 0.0],
+            [0.0, 0.15, 0.7, 0.15, 0.0],
+            [0.0, 0.05, 0.15, 0.75, 0.05],
+            [0.0, 0.0, 0.0, 0.05, 0.95],
+        ])
+        self.label_smoothing = torch.nn.Embedding.from_pretrained(smooth_labels)
+        self.criterion = LabelSmoothLoss()
 
         self.apply(self._init_weights)
-
+        
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             module.weight.data.normal_(mean=0.0, std=0.02)
@@ -47,11 +67,10 @@ class LitGPT(pl.LightningModule):
 
     def forward(self, x, targets=None):
         x = self.emb(x)
-        x = x.repeat(1, 1, self.hparams.n_head)
         x = self.blocks(x)
         x = self.ln_f(x)
-        x = x.mean(axis=1)
-        return self.head(x).sigmoid()
+        # x = x.mean(axis=1)
+        return self.head(x[:, -1, :])
 
     def configure_optimizers(self):
         # create the optimizer
@@ -95,16 +114,43 @@ class LitGPT(pl.LightningModule):
                                   if n not in self.param_names_no_decay]
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        loss = F.mse_loss(self(x).squeeze(), y)
+        _, x, y = batch
+        y = self.label_smoothing(y)
+        loss = self.criterion(self(x), y)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        loss = F.mse_loss(self(x).squeeze(), y)
+        eras, x, y = batch
+        outputs = self(x)
+        loss = self.criterion(outputs, self.label_smoothing(y))
         self.log('val_loss', loss)
-        return loss
+        predictions = outputs.argmax(axis=-1).flatten().tolist()
+        targets = y.flatten().tolist()
+        return eras.flatten().tolist(), predictions, targets
+
+    
+    def validation_epoch_end(self, validation_step_outputs):
+        eras = chain.from_iterable([x[0] for x in validation_step_outputs])
+        predictions = chain.from_iterable([x[1] for x in validation_step_outputs])
+        targets = chain.from_iterable([x[2] for x in validation_step_outputs])
+
+        df = pd.DataFrame({'era': eras, 'prediction': predictions, 'target': targets})
+        if len(df['era'].unique()) > 1:
+            correlations = df.groupby("era").apply(score)
+            self.log('val_correlation_mean', correlations.mean())
+            self.log('val_correlation_std', correlations.std())
+
+# Submissions are scored by spearman correlation
+def correlation(predictions, targets):
+    ranked_preds = predictions.rank(pct=True, method="first")
+    return np.corrcoef(ranked_preds, targets)[0, 1]
+
+TARGET_NAME = f"target"
+PREDICTION_NAME = f"prediction"
+# convenience method for scoring
+def score(df):
+    return correlation(df[PREDICTION_NAME], df[TARGET_NAME])
 
 
 class Block(nn.Module):

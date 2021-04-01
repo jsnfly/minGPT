@@ -22,12 +22,12 @@ class LearningRateDecayCallback(pl.Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx,
                            dataloader_idx):
         optimizer = trainer.optimizers[0]
-        _, y = batch
+        _, x, _ = batch
 
         if self.lr_decay:
             # TODO:'<pad>'-Token with index -100 in dictionary?
             # number of tokens processed this step (i.e. label is not -100)
-            self.tokens += (y >= 0).sum()
+            self.tokens += x.numel()
             if self.tokens < self.warmup_tokens:
                 # linear warmup
                 lr_mult = float(self.tokens) / float(
