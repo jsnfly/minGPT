@@ -11,7 +11,7 @@ from pytorch_lightning.utilities.parsing import get_init_args
 from itertools import chain
 
 class LabelSmoothLoss(nn.Module):
-    
+
     def forward(self, input, target):
         log_prob = F.log_softmax(input, dim=-1)
         loss = (-target * log_prob).sum(dim=-1).mean()
@@ -51,11 +51,12 @@ class LitGPT(pl.LightningModule):
             [0.0, 0.05, 0.15, 0.75, 0.05],
             [0.0, 0.0, 0.0, 0.05, 0.95],
         ])
+
+        self.apply(self._init_weights)
+
         self.label_smoothing = torch.nn.Embedding.from_pretrained(smooth_labels)
         self.criterion = LabelSmoothLoss()
 
-        self.apply(self._init_weights)
-        
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             module.weight.data.normal_(mean=0.0, std=0.02)
@@ -129,7 +130,7 @@ class LitGPT(pl.LightningModule):
         targets = y.flatten().tolist()
         return eras.flatten().tolist(), predictions, targets
 
-    
+
     def validation_epoch_end(self, validation_step_outputs):
         eras = chain.from_iterable([x[0] for x in validation_step_outputs])
         predictions = chain.from_iterable([x[1] for x in validation_step_outputs])
