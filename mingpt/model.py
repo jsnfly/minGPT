@@ -125,7 +125,8 @@ class LitGPT(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         outputs = self(x)
-        loss = self.criterion(outputs, self.label_smoothing(y))
+        # loss = self.criterion(outputs, self.label_smoothing(y))
+        loss = self.criterion(self(x), y)
         self.log('val_loss', loss)
         # predictions = outputs.argmax(axis=-1).flatten().tolist()
         # targets = y.flatten().tolist()
