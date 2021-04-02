@@ -42,20 +42,21 @@ class LitGPT(pl.LightningModule):
         ])
 
         self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, 5, bias=False)
+        self.head = nn.Linear(n_embd, 1, bias=False)
 
-        smooth_labels = torch.FloatTensor([
-            [0.95, 0.05, 0.0, 0.0, 0.0],
-            [0.05, 0.75, 0.15, 0.05, 0.0],
-            [0.0, 0.15, 0.7, 0.15, 0.0],
-            [0.0, 0.05, 0.15, 0.75, 0.05],
-            [0.0, 0.0, 0.0, 0.05, 0.95],
-        ])
+        # smooth_labels = torch.FloatTensor([
+        #     [0.95, 0.05, 0.0, 0.0, 0.0],
+        #     [0.05, 0.75, 0.15, 0.05, 0.0],
+        #     [0.0, 0.15, 0.7, 0.15, 0.0],
+        #     [0.0, 0.05, 0.15, 0.75, 0.05],
+        #     [0.0, 0.0, 0.0, 0.05, 0.95],
+        # ])
 
         self.apply(self._init_weights)
 
-        self.label_smoothing = torch.nn.Embedding.from_pretrained(smooth_labels)
-        self.criterion = LabelSmoothLoss()
+        # self.label_smoothing = torch.nn.Embedding.from_pretrained(smooth_labels)
+        # self.criterion = LabelSmoothLoss()
+        self.criterion = nn.BCEWithLogitsLoss()
 
     def _init_weights(self, module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
@@ -71,7 +72,7 @@ class LitGPT(pl.LightningModule):
         x = self.blocks(x)
         x = self.ln_f(x)
         # x = x.mean(axis=1)
-        return self.head(x[:, -1, :])
+        return self.head(x).squeeze()
 
     def configure_optimizers(self):
         # create the optimizer
@@ -115,32 +116,33 @@ class LitGPT(pl.LightningModule):
                                   if n not in self.param_names_no_decay]
 
     def training_step(self, batch, batch_idx):
-        _, x, y = batch
-        y = self.label_smoothing(y)
+        x, y = batch
+        # y = self.label_smoothing(y)
         loss = self.criterion(self(x), y)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        eras, x, y = batch
+        x, y = batch
         outputs = self(x)
         loss = self.criterion(outputs, self.label_smoothing(y))
         self.log('val_loss', loss)
-        predictions = outputs.argmax(axis=-1).flatten().tolist()
-        targets = y.flatten().tolist()
-        return eras.flatten().tolist(), predictions, targets
+        # predictions = outputs.argmax(axis=-1).flatten().tolist()
+        # targets = y.flatten().tolist()
+        # return eras.flatten().tolist(), predictions, targets
+        return loss
 
 
-    def validation_epoch_end(self, validation_step_outputs):
-        eras = chain.from_iterable([x[0] for x in validation_step_outputs])
-        predictions = chain.from_iterable([x[1] for x in validation_step_outputs])
-        targets = chain.from_iterable([x[2] for x in validation_step_outputs])
+    # def validation_epoch_end(self, validation_step_outputs):
+    #     eras = chain.from_iterable([x[0] for x in validation_step_outputs])
+    #     predictions = chain.from_iterable([x[1] for x in validation_step_outputs])
+    #     targets = chain.from_iterable([x[2] for x in validation_step_outputs])
 
-        df = pd.DataFrame({'era': eras, 'prediction': predictions, 'target': targets})
-        if len(df['era'].unique()) > 1:
-            correlations = df.groupby("era").apply(score)
-            self.log('val_correlation_mean', correlations.mean())
-            self.log('val_correlation_std', correlations.std())
+    #     df = pd.DataFrame({'era': eras, 'prediction': predictions, 'target': targets})
+    #     if len(df['era'].unique()) > 1:
+    #         correlations = df.groupby("era").apply(score)
+    #         self.log('val_correlation_mean', correlations.mean())
+    #         self.log('val_correlation_std', correlations.std())
 
 # Submissions are scored by spearman correlation
 def correlation(predictions, targets):
