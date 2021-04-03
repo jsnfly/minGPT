@@ -35,7 +35,7 @@ class LitGPT(pl.LightningModule):
         # auto creates self.hparams from the method signature
         self.save_hyperparameters()
 
-        self.emb = nn.Embedding(5, n_embd)
+        self.emb = nn.Embedding(6, n_embd)
 
         self.blocks = nn.Sequential(*[
             Block(self.hparams) for _ in range(n_layer)
@@ -72,7 +72,7 @@ class LitGPT(pl.LightningModule):
         x = self.blocks(x)
         x = self.ln_f(x)
         # x = x.mean(axis=1)
-        return self.head(x).squeeze()
+        return self.head(x[:, -1, :])
 
     def configure_optimizers(self):
         # create the optimizer
