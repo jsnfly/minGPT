@@ -116,34 +116,32 @@ class LitGPT(pl.LightningModule):
                                   if n not in self.param_names_no_decay]
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
+        _, x, y = batch
         # y = self.label_smoothing(y)
         loss = self.criterion(self(x), y)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
+        eras, x, y = batch
         outputs = self(x)
-        # loss = self.criterion(outputs, self.label_smoothing(y))
-        loss = self.criterion(self(x), y)
+        loss = self.criterion(outputs, y)
         self.log('val_loss', loss)
         # predictions = outputs.argmax(axis=-1).flatten().tolist()
-        # targets = y.flatten().tolist()
-        # return eras.flatten().tolist(), predictions, targets
-        return loss
+        targets = y.flatten().tolist()
+        return eras.flatten().tolist(), outputs.flatten().tolist(), targets
 
 
-    # def validation_epoch_end(self, validation_step_outputs):
-    #     eras = chain.from_iterable([x[0] for x in validation_step_outputs])
-    #     predictions = chain.from_iterable([x[1] for x in validation_step_outputs])
-    #     targets = chain.from_iterable([x[2] for x in validation_step_outputs])
+    def validation_epoch_end(self, validation_step_outputs):
+        eras = chain.from_iterable([x[0] for x in validation_step_outputs])
+        predictions = chain.from_iterable([x[1] for x in validation_step_outputs])
+        targets = chain.from_iterable([x[2] for x in validation_step_outputs])
 
-    #     df = pd.DataFrame({'era': eras, 'prediction': predictions, 'target': targets})
-    #     if len(df['era'].unique()) > 1:
-    #         correlations = df.groupby("era").apply(score)
-    #         self.log('val_correlation_mean', correlations.mean())
-    #         self.log('val_correlation_std', correlations.std())
+        df = pd.DataFrame({'era': eras, 'prediction': predictions, 'target': targets})
+        if len(df['era'].unique()) > 1:
+            correlations = df.groupby("era").apply(score)
+            self.log('val_correlation_mean', correlations.mean())
+            self.log('val_correlation_std', correlations.std())
 
 # Submissions are scored by spearman correlation
 def correlation(predictions, targets):
