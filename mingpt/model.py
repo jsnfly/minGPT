@@ -72,7 +72,7 @@ class LitGPT(pl.LightningModule):
         x = self.blocks(x)
         x = self.ln_f(x)
         # x = x.mean(axis=1)
-        return self.head(x[:, -1, :])
+        return self.head(x[:, -1, :]).sigmoid()
 
     def configure_optimizers(self):
         # create the optimizer
@@ -118,14 +118,14 @@ class LitGPT(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         _, x, y = batch
         # y = self.label_smoothing(y)
-        loss = self.criterion(self(x), y)
+        loss = self.criterion(self(x).squeeze(), y)
         self.log('train_loss', loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         eras, x, y = batch
         outputs = self(x)
-        loss = self.criterion(outputs, y)
+        loss = self.criterion(outputs.squeeze(), y)
         self.log('val_loss', loss)
         # predictions = outputs.argmax(axis=-1).flatten().tolist()
         targets = y.flatten().tolist()
